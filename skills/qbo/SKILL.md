@@ -189,3 +189,5 @@ qbo exit-codes --json         # Exit codes as JSON
 ## Reference
 
 See [references/COMMANDS.md](references/COMMANDS.md) for full command reference.
+
+See [references/TIMEACTIVITY-EXAMPLES.md](references/TIMEACTIVITY-EXAMPLES.md) for time-tracking workflows.
