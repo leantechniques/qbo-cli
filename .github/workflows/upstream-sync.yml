@@ -1,0 +1,239 @@
+name: Upstream Sync
+
+# Software factory: watch voska/qbo-cli for new commits, merge them into a
+# sync branch, run the quality gates, and open a PR for human review.
+# Clean merges that pass the gates open a ready PR directly. Conflicts or
+# test failures are handed to Claude Code in CI to resolve; its result is
+# re-verified deterministically before a PR is opened. Human merge is the
+# ship gate — nothing lands on main automatically.
+
+on:
+  schedule:
+    - cron: "0 12 * * 1-5" # weekdays ~06:00 America/Chicago
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: https://github.com/voska/qbo-cli.git
+  REVIEWER: bcarlso-lt
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.status.outputs.status }}
+      branch: ${{ steps.detect.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect upstream changes
+        id: detect
+        run: |
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch upstream main
+          count=$(git rev-list --count HEAD..upstream/main)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          # key the branch on the upstream SHA, not the date: idempotent per
+          # upstream state and immune to same-day rerun collisions
+          echo "branch=sync/upstream-$(git rev-parse --short upstream/main)" >> "$GITHUB_OUTPUT"
+          echo "Upstream commits not in main: $count"
+
+      - name: Check for existing sync PR
+        id: existing
+        if: steps.detect.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          open=$(gh pr list --state open --json headRefName \
+            --jq '[.[] | select(.headRefName | startswith("sync/upstream-"))] | length')
+          echo "open=$open" >> "$GITHUB_OUTPUT"
+          [ "$open" != "0" ] && echo "A sync PR is already open; skipping." || true
+
+      - name: Attempt merge
+        id: merge
+        if: steps.detect.outputs.count != '0' && steps.existing.outputs.open == '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${{ steps.detect.outputs.branch }}"
+          if git merge --no-edit upstream/main; then
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+          else
+            git merge --abort
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-go@v6
+        if: steps.merge.outputs.merged == 'true'
+        with:
+          go-version: "1.25"
+
+      - name: Quality gates
+        id: gates
+        if: steps.merge.outputs.merged == 'true'
+        continue-on-error: true
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b /usr/local/bin v2.11.4
+          make build
+          make test
+          make vet
+          make lint
+
+      - name: Resolve status
+        id: status
+        run: |
+          if [ "${{ steps.detect.outputs.count }}" = "0" ]; then
+            echo "status=up-to-date" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.existing.outputs.open }}" != "0" ]; then
+            echo "status=pr-exists" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.merge.outputs.merged }}" = "true" ] && [ "${{ steps.gates.outcome }}" = "success" ]; then
+            echo "status=clean-green" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=needs-claude" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push branch and open PR
+        if: steps.status.outputs.status == 'clean-green'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # --force: the SHA-keyed branch may linger from an earlier failed run
+          git push --force origin "${{ steps.detect.outputs.branch }}"
+          {
+            echo "Automated upstream sync: merges \`voska/qbo-cli\` main into ours."
+            echo
+            echo "Merge was clean and \`make build\`, \`make test\`, \`make vet\`, \`make lint\` all passed in this workflow."
+            echo
+            echo "## Upstream commits"
+            echo
+            git log --oneline origin/main..upstream/main | sed 's/^/- /'
+          } > /tmp/pr-body.md
+          gh pr create \
+            --title "sync: merge upstream $(date -u +%Y-%m-%d)" \
+            --body-file /tmp/pr-body.md \
+            --base main \
+            --head "${{ steps.detect.outputs.branch }}" \
+            --reviewer "$REVIEWER"
+
+  claude-resolve:
+    needs: sync
+    if: needs.sync.outputs.status == 'needs-claude'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write # fetch GitHub OIDC token for Anthropic identity federation
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          # No ambient credentials while Claude runs: "do not push" is enforced
+          # by mechanism, not just prompt. The push step re-authenticates itself.
+          persist-credentials: false
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+
+      - name: Prepare sync branch
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b /usr/local/bin v2.11.4
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch upstream main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${{ needs.sync.outputs.branch }}"
+
+      - name: Claude resolves the merge
+        uses: anthropics/claude-code-action@v1
+        with:
+          # Anthropic workload identity federation — no API key secret needed.
+          # These are non-sensitive identifiers from the Anthropic Console
+          # (Organization settings → identity federation).
+          anthropic_organization_id: 63cc5434-820d-401a-b6c7-9a1e65133921
+          anthropic_service_account_id: svac_01VsbTypvfaU2JjdxqTALKQG
+          anthropic_federation_rule_id: fdrl_013FbzWdgBJhvuJutsQhDSXW
+          claude_args: '--allowedTools "Bash(git:*),Bash(make:*),Bash(go:*),Read,Edit,Write,Grep,Glob"'
+          prompt: |
+            You are on branch ${{ needs.sync.outputs.branch }} of a fork of voska/qbo-cli.
+            The remote `upstream` is already fetched. Merge `upstream/main` into this
+            branch. A plain `git merge` either conflicts or breaks the quality gates —
+            your job is to produce a correct, green merge.
+
+            Rules for resolving conflicts:
+            - This fork carries Lean Techniques customizations that MUST be preserved:
+              `internal/entra/`, `internal/vault/`, the bootstrap.json client-creds
+              tier in `internal/auth/` and `internal/config/`, and the bouncer-mode
+              login flow for hosted redirect URIs.
+            - For everything else, prefer upstream's version unless it breaks the
+              customizations above.
+            - After resolving, run `make build`, `make test`, `make vet`, and
+              `make lint` and fix any failures until all four pass.
+            - Commit the merge (and any follow-up fixes) with clear messages that list
+              the files you resolved by hand.
+            - Do NOT push; the workflow pushes after verifying your work.
+
+      - name: Verify Claude's result
+        id: verify
+        continue-on-error: true
+        run: |
+          [ -z "$(git status --porcelain)" ] # fail on any uncommitted or untracked file
+          [ "$(git rev-list --count HEAD..upstream/main)" = "0" ] # upstream fully merged
+          git merge-base --is-ancestor origin/main HEAD # fork history preserved, not reset to upstream
+          test -d internal/entra && test -d internal/vault # LT customizations still present
+          make build
+          make test
+          make vet
+          make lint
+
+      - name: Push branch and open PR
+        if: steps.verify.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # checkout ran with persist-credentials:false — authenticate this push
+          # explicitly; --force covers a leftover branch from an earlier run
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" \
+            "HEAD:refs/heads/${{ needs.sync.outputs.branch }}"
+          {
+            echo "Automated upstream sync: merges \`voska/qbo-cli\` main into ours."
+            echo
+            echo "> [!IMPORTANT]"
+            echo "> The plain merge conflicted or failed the quality gates, so **Claude"
+            echo "> Code resolved it in CI**. Gates were re-verified deterministically"
+            echo "> afterward, but review the resolution commits carefully."
+            echo
+            echo "## Merged upstream commits"
+            echo
+            git log --oneline origin/main..upstream/main | sed 's/^/- /'
+          } > /tmp/pr-body.md
+          gh pr create \
+            --title "sync: merge upstream $(date -u +%Y-%m-%d) (Claude-resolved)" \
+            --body-file /tmp/pr-body.md \
+            --base main \
+            --head "${{ needs.sync.outputs.branch }}" \
+            --reviewer "$REVIEWER"
+
+      - name: File issue on failure
+        # always(): must fire even when the Claude step itself failed (which
+        # would otherwise skip this step via the implicit success() guard)
+        if: always() && steps.verify.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Upstream sync needs manual resolution ($(date -u +%Y-%m-%d))" \
+            --body "The scheduled upstream sync could not be completed automatically: the plain merge of \`upstream/main\` was dirty and Claude's resolution did not verify green. Resolve manually: \`git fetch upstream && git merge upstream/main\`, fix conflicts/tests, and open a PR. Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --assignee "$REVIEWER"
