@@ -1,3 +1,10 @@
+# NOTE (Lean Techniques fork): kept only for parity with upstream merges — do
+# not run it here. There is no release workflow in this fork by design, and the
+# publishing targets below are upstream's (voska/homebrew-tap, voska/scoop-bucket),
+# so `goreleaser release` from this fork would push fork-built artifacts at
+# someone else's tap. It would also produce macOS binaries built CGO_ENABLED=0,
+# which silently fall back to a passphrase-prompting file keyring. LT ships a
+# signed, notarized .pkg from the qbo-cli-deploy repo instead.
 version: 2
 
 builds:

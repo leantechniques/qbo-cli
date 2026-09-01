@@ -176,6 +176,21 @@ jobs:
               `internal/entra/`, `internal/vault/`, the bootstrap.json client-creds
               tier in `internal/auth/` and `internal/config/`, and the bouncer-mode
               login flow for hosted redirect URIs.
+            - This fork intentionally ships NO release workflow:
+              `.github/workflows/release.yml` is deleted on purpose. If upstream
+              modifies it, the merge will surface a modify/delete conflict —
+              resolve it by KEEPING THE FILE DELETED (`git rm`), never by
+              restoring upstream's version. Distribution is a signed .pkg via
+              Intune, built by the qbo-cli-deploy repo from a tag; a release
+              workflow here would publish macOS binaries built CGO_ENABLED=0,
+              whose Keychain backend silently degrades to a passphrase-prompting
+              file keyring, and would fail anyway on a HOMEBREW_TAP_GITHUB_TOKEN
+              secret this fork does not have.
+            - `.goreleaser.yaml` is kept only for upstream-merge parity and is
+              not wired up to anything. Take upstream's version of its body, but
+              KEEP the `NOTE (Lean Techniques fork)` comment block at the top —
+              it is the only thing preventing someone from running goreleaser
+              here and pushing fork-built artifacts at upstream's tap.
             - For everything else, prefer upstream's version unless it breaks the
               customizations above.
             - After resolving, run `make build`, `make test`, `make vet`, and
@@ -192,6 +207,9 @@ jobs:
           [ "$(git rev-list --count HEAD..upstream/main)" = "0" ] # upstream fully merged
           git merge-base --is-ancestor origin/main HEAD # fork history preserved, not reset to upstream
           test -d internal/entra && test -d internal/vault # LT customizations still present
+          # The release workflow is deleted on purpose; a modify/delete conflict
+          # must not quietly restore it (see the resolve rules above).
+          ! test -f .github/workflows/release.yml
           make build
           make test
           make vet
