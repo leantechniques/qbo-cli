@@ -32,6 +32,7 @@ type CLI struct {
 	Create      CreateCmd    `cmd:"" help:"Create an entity from JSON."`
 	Update      UpdateCmd    `cmd:"" help:"Update an entity."`
 	Delete      DeleteCmd    `cmd:"" help:"Delete an entity by ID."`
+	Void        VoidCmd      `cmd:"" help:"Void a transaction by ID, preserving its audit trail."`
 	List        ListCmd      `cmd:"" help:"List entities (sugar for query)."`
 	Batch       BatchCmd     `cmd:"" help:"Run batch operations."`
 	CDC         CDCCmd       `cmd:"" name:"cdc" help:"Change data capture polling."`
@@ -39,6 +40,7 @@ type CLI struct {
 	Company     CompanyCmd   `cmd:"" help:"Company info and switching."`
 	Attach      AttachCmd    `cmd:"" help:"Upload a file attachment to an entity."`
 	Download    DownloadCmd  `cmd:"" help:"Download an attachment file."`
+	PDF         PDFCmd       `cmd:"" name:"pdf" help:"Save a transaction as the PDF QuickBooks renders."`
 	Schema      SchemaCmd    `cmd:"" help:"Dump CLI schema as JSON for agent introspection."`
 	ExitCodes   ExitCodesCmd `cmd:"" name:"exit-codes" help:"Print exit code table."`
 }

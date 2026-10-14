@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/voska/qbo-cli/internal/api"
+	"github.com/voska/qbo-cli/internal/errfmt"
 )
 
 type SchemaCmd struct {
@@ -12,7 +13,11 @@ type SchemaCmd struct {
 
 func (c *SchemaCmd) Run(g *Globals) error {
 	if c.Command != "" {
-		return WriteOutput(g.Ctx, commandSchema(c.Command, g.Version))
+		schema, err := commandSchema(c.Command, g.Version)
+		if err != nil {
+			return err
+		}
+		return WriteOutput(g.Ctx, schema)
 	}
 	return WriteOutput(g.Ctx, fullSchema(g.Version))
 }
@@ -35,6 +40,7 @@ func fullSchema(version string) map[string]any {
 			"creatable": e.Creatable,
 			"updatable": e.Updatable,
 			"deletable": e.Deletable,
+			"voidable":  e.VoidStyle != "",
 			"read_only": e.ReadOnly,
 		})
 	}
@@ -83,6 +89,12 @@ func fullSchema(version string) map[string]any {
 				"args": []string{"entity", "id"},
 			},
 			{
+				"name":  "void",
+				"help":  "Void a transaction by ID, preserving its audit trail",
+				"args":  []string{"entity", "id"},
+				"flags": []string{"--sync-token"},
+			},
+			{
 				"name": "query",
 				"help": "Run a raw query against the QBO API",
 				"args": []string{"query"},
@@ -125,6 +137,12 @@ func fullSchema(version string) map[string]any {
 				"flags": []string{"--output", "--url", "--force"},
 			},
 			{
+				"name":  "pdf",
+				"help":  "Save a transaction as the PDF QuickBooks renders.",
+				"args":  []string{"entity", "id"},
+				"flags": []string{"--output"},
+			},
+			{
 				"name": "schema",
 				"help": "Dump CLI schema as JSON for agent introspection",
 				"args": []string{"command?"},
@@ -151,16 +169,16 @@ func fullSchema(version string) map[string]any {
 	}
 }
 
-func commandSchema(name, version string) map[string]any {
+func commandSchema(name, version string) (map[string]any, error) {
 	schema := fullSchema(version)
 	commands, ok := schema["commands"].([]map[string]any)
 	if !ok {
-		return map[string]any{"error": "command not found: " + name}
+		return nil, errfmt.Usage("command not found: " + name)
 	}
 	for _, cmd := range commands {
 		if cmd["name"] == name {
-			return cmd
+			return cmd, nil
 		}
 	}
-	return map[string]any{"error": "command not found: " + name}
+	return nil, errfmt.Usage("command not found: " + name)
 }
