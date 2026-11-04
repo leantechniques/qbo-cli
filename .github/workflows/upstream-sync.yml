@@ -15,7 +15,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  issues: write
 
 concurrency:
   group: upstream-sync
@@ -132,7 +131,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      issues: write
       id-token: write # fetch GitHub OIDC token for Anthropic identity federation
     steps:
       - uses: actions/checkout@v6
@@ -164,6 +162,10 @@ jobs:
           anthropic_organization_id: 63cc5434-820d-401a-b6c7-9a1e65133921
           anthropic_service_account_id: svac_01VsbTypvfaU2JjdxqTALKQG
           anthropic_federation_rule_id: fdrl_013FbzWdgBJhvuJutsQhDSXW
+          # Use the workflow token instead of exchanging OIDC for a Claude
+          # GitHub App token — the app is not installed on this repo, and
+          # that exchange fails with 401 before Claude ever runs.
+          github_token: ${{ github.token }}
           claude_args: '--allowedTools "Bash(git:*),Bash(make:*),Bash(go:*),Read,Edit,Write,Grep,Glob"'
           prompt: |
             You are on branch ${{ needs.sync.outputs.branch }} of a fork of voska/qbo-cli.
@@ -244,14 +246,15 @@ jobs:
             --head "${{ needs.sync.outputs.branch }}" \
             --reviewer "$REVIEWER"
 
-      - name: File issue on failure
+      - name: Report failure
         # always(): must fire even when the Claude step itself failed (which
-        # would otherwise skip this step via the implicit success() guard)
+        # would otherwise skip this step via the implicit success() guard).
+        # Issues are disabled on this fork, so report via the run summary and
+        # fail the job; the failed scheduled run is the notification.
         if: always() && steps.verify.outcome != 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          gh issue create \
-            --title "Upstream sync needs manual resolution ($(date -u +%Y-%m-%d))" \
-            --body "The scheduled upstream sync could not be completed automatically: the plain merge of \`upstream/main\` was dirty and Claude's resolution did not verify green. Resolve manually: \`git fetch upstream && git merge upstream/main\`, fix conflicts/tests, and open a PR. Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --assignee "$REVIEWER"
+          msg="Upstream sync needs manual resolution: the plain merge of upstream/main was dirty and Claude's resolution did not verify green. Resolve manually: git fetch upstream && git merge upstream/main, fix conflicts/tests, and open a PR."
+          echo "## Upstream sync needs manual resolution" >> "$GITHUB_STEP_SUMMARY"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::$msg"
+          exit 1
