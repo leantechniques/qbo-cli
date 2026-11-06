@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push upstream:*)",
+      "Bash(git push upstream *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(g*)",
+            "command": "jq -r \".tool_input.command // \\\"\\\"\" | grep -Eq \"(gh[[:space:]]+(pr|issue)[[:space:]]+create.*voska)|(git[[:space:]]+push.*(upstream|voska))\" && echo \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PreToolUse\\\",\\\"permissionDecision\\\":\\\"deny\\\",\\\"permissionDecisionReason\\\":\\\"Blocked: this command targets the upstream repo voska/qbo-cli. PRs and pushes belong on leantechniques/qbo-cli.\\\"}}\" || exit 0",
+            "statusMessage": "Checking upstream-repo guard"
+          }
+        ]
+      }
+    ]
+  }
+}

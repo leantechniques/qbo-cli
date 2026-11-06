@@ -8,6 +8,11 @@ allowed-tools: Bash(qbo query:*), Bash(qbo get:*), Bash(qbo list:*), Bash(qbo re
 
 ## Install
 
+The upstream Homebrew tap, Scoop bucket, `go install`, and release binaries all
+build from `voska/qbo-cli`, which does **not** carry the Key Vault credential
+bootstrap (`internal/vault`, `internal/entra`) this build adds. Use them only if
+you do not need that bootstrap:
+
 ```bash
 # macOS / Linux
 brew install voska/tap/qbo
@@ -20,6 +25,28 @@ go install github.com/voska/qbo-cli/cmd/qbo@latest
 
 # Binary: https://github.com/voska/qbo-cli/releases
 ```
+
+To get the bootstrap, build from a checkout of this repository:
+
+```bash
+make build     # -> bin/qbo, version stamped from git describe
+make install   # -> $GOPATH/bin/qbo (or ~/go/bin/qbo), i.e. on PATH
+```
+
+Use the Makefile rather than a bare `go build`: it stamps `-X main.version`, so
+the version check below reports the real tag instead of `dev`, and `make
+install` puts the binary on PATH so the bare `qbo ...` commands in this skill
+work.
+
+Do not set `CGO_ENABLED=0` on macOS. The Keychain backend is cgo, and a non-cgo
+binary silently falls back to a passphrase-prompting file keyring instead of
+failing loudly.
+
+If your organization distributes a prebuilt, signed binary, prefer that — it
+ships with a machine-scope `bootstrap.json` already in place.
+
+There is no `--version` flag; read the build version with
+`qbo schema --json --select version`.
 
 ## Getting Credentials
 
